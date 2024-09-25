@@ -88,10 +88,16 @@ var $_SERVER = new Proxy({}, {
 /* SESSION: session data set by web app, saved to disk, and referenced by session id stored in cookie */
 var $_SESSION = {};
 var $_jst_session = null;
+var $_val_input = {};
 function session_start()
 {
   if($_jst_session)
     return;
+  if($_val_input == 1) 
+  {
+    $_val_input = 0;
+    return;
+  }
   ccsp_session.start();
   var host = getenv('HTTPS');
   if (host == false)
@@ -187,7 +193,10 @@ if(postData)
       $_POST[postValue[0]] = decodeURIComponent(value);
     }
     else
+    {
       print("unexpected post data");
+      $_val_input = 1;
+    }
   }
 }
 
