@@ -154,6 +154,84 @@ static string getFieldValue(const string& input, const string& key)
   return input.substr(start, end - start);
 }
 
+static duk_ret_t test_getenv(duk_context* ctx)
+{
+  const char* name = duk_require_string(ctx, 0);
+  const char* value = getenv(name);
+
+  if (value)
+    duk_push_string(ctx, value);
+  else
+    duk_push_false(ctx);
+
+  return 1;
+}
+
+static duk_ret_t test_no_post_data(duk_context* ctx)
+{
+  duk_push_false(ctx);
+  return 1;
+}
+
+static void installSessionPrefixDependencies(duk_context* ctx)
+{
+  duk_push_c_function(ctx, ccsp_session_module_open, 0);
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  duk_put_global_string(ctx, "ccsp_session");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_getenv, 1);
+  duk_put_prop_string(ctx, -2, "getenv");
+  duk_put_global_string(ctx, "ccsp");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_no_post_data, 0);
+  duk_put_prop_string(ctx, -2, "getPost");
+  duk_push_c_function(ctx, test_no_post_data, 0);
+  duk_put_prop_string(ctx, -2, "getFiles");
+  duk_put_global_string(ctx, "ccsp_post");
+}
+
+static void evaluateSessionPrefix(duk_context* ctx)
+{
+  std::ifstream prefix_file(JST_PREFIX_PATH);
+  ASSERT_TRUE(prefix_file.is_open());
+  std::string prefix((std::istreambuf_iterator<char>(prefix_file)),
+                     std::istreambuf_iterator<char>());
+  prefix += "\n} catch (e) { throw e; }\n";
+
+  ASSERT_EQ(duk_peval_lstring(ctx, prefix.c_str(), prefix.length()), DUK_EXEC_SUCCESS)
+      << duk_safe_to_string(ctx, -1);
+  duk_pop(ctx);
+}
+
+static bool evaluateJavaScriptBoolean(duk_context* ctx, const char* source)
+{
+  if (duk_peval_string(ctx, source) != DUK_EXEC_SUCCESS)
+  {
+    duk_pop(ctx);
+    return false;
+  }
+
+  const bool result = duk_get_boolean(ctx, -1);
+  duk_pop(ctx);
+  return result;
+}
+
+static std::string evaluateJavaScriptString(duk_context* ctx, const char* source)
+{
+  if (duk_peval_string(ctx, source) != DUK_EXEC_SUCCESS)
+  {
+    duk_pop(ctx);
+    return "";
+  }
+
+  const char* result = duk_get_string(ctx, -1);
+  std::string value = result ? result : "";
+  duk_pop(ctx);
+  return value;
+}
+
 int recurseDirectory(const string& path, vector<string>& files, const string& match)
 {
   DIR *dir;
@@ -651,6 +729,146 @@ TEST(general, session_start_rejects_missing_session_file)
   ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
   EXPECT_FALSE(duk_get_boolean(ctx, -1));
   duk_pop_2(ctx);
+
+  duk_destroy_heap(ctx);
+}
+
+TEST(general, session_prefix_start_failure_emits_no_header_and_keeps_empty_session)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  cookie_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx, "_jst_header_buffer === ''"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_jst_session === null && Object.getPrototypeOf($_SESSION) === Object.prototype"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_SESSION.safe = 'value'; delete $_SESSION.safe; !session_status()"));
+
+  duk_destroy_heap(ctx);
+}
+
+TEST(general, session_prefix_unset_clears_persisted_data_and_rejects_inactive_session)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  cookie_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_unset()"));
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_create()"));
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_SESSION.name = 'alice'; $_SESSION.count = 2; $_SESSION.enabled = true; true"));
+  const std::string session_id = evaluateJavaScriptString(ctx, "session_id()");
+  ASSERT_FALSE(session_id.empty());
+  const std::string session_file = "/tmp/" + session_id;
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_unset()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "Object.keys($_SESSION).length === 0 && session_status()"));
+
+  std::ifstream persisted_data(session_file);
+  ASSERT_TRUE(persisted_data.is_open());
+  EXPECT_TRUE(std::string((std::istreambuf_iterator<char>(persisted_data)),
+                          std::istreambuf_iterator<char>()).empty());
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_unset()"));
+  duk_destroy_heap(ctx);
+}
+
+TEST(general, session_prefix_cookie_secure_attribute_follows_request_scheme)
+{
+  EnvVarGuard https_guard("HTTPS");
+  EnvVarGuard request_scheme_guard("REQUEST_SCHEME");
+  EnvVarGuard ssl_protocol_guard("SSL_PROTOCOL");
+  https_guard.set(nullptr);
+  request_scheme_guard.set(nullptr);
+  ssl_protocol_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_create()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer.indexOf('; httponly') !== -1 && _jst_header_buffer.indexOf('; secure') === -1"));
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  duk_destroy_heap(ctx);
+
+  request_scheme_guard.set("https");
+  ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_create()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer.indexOf('; httponly') !== -1 && _jst_header_buffer.indexOf('; secure') !== -1"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx, "session_id().charAt(8) === '1'"));
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  duk_destroy_heap(ctx);
+}
+
+TEST(general, session_prefix_rejects_https_cookie_on_http_request)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  EnvVarGuard https_guard("HTTPS");
+  const std::string session_id = std::string("jst_sess1") + std::string(31, 'E');
+  const std::string session_file = "/tmp/" + session_id;
+
+  FILE* file = fopen(session_file.c_str(), "w");
+  ASSERT_NE(file, nullptr);
+  fclose(file);
+  cookie_guard.set(("DUKSID=" + session_id).c_str());
+  https_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer === '' && !session_status() && $_jst_session === null"));
+  EXPECT_EQ(access(session_file.c_str(), F_OK), 0);
+
+  unlink(session_file.c_str());
+  duk_destroy_heap(ctx);
+}
+
+TEST(general, session_prefix_stale_proxy_does_not_recreate_deleted_session_file)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  const std::string session_id = makeValidSessionId('F');
+  const std::string session_file = "/tmp/" + session_id;
+
+  FILE* file = fopen(session_file.c_str(), "w");
+  ASSERT_NE(file, nullptr);
+  fputs("persisted|s|value;", file);
+  fclose(file);
+  cookie_guard.set(("DUKSID=" + session_id).c_str());
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_start()"));
+  ASSERT_EQ(unlink(session_file.c_str()), 0);
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_SESSION.added = 'new'; delete $_SESSION.persisted; !session_status()"));
+  EXPECT_NE(access(session_file.c_str(), F_OK), 0);
 
   duk_destroy_heap(ctx);
 }
