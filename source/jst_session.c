@@ -152,11 +152,47 @@ static int get_session_file_path(const char* session_id, char* path, size_t path
   return 1;
 }
 
+static int get_session_id_cookie(const char* cookie, const char** value, size_t* value_len)
+{
+  const char* field = cookie;
+  const char* matched_value = NULL;
+  size_t matched_value_len = 0;
+
+  while(field)
+  {
+    const char* field_end = strchr(field, ';');
+    const char* field_start = field;
+    const char* value_end = field_end ? field_end : field + strlen(field);
+
+    while(field_start < value_end && (*field_start == ' ' || *field_start == '\t'))
+      field_start++;
+
+    while(value_end > field_start &&
+          (value_end[-1] == ' ' || value_end[-1] == '\t'))
+      value_end--;
+
+    if((size_t)(value_end - field_start) >= 7 &&
+       strncmp(field_start, "DUKSID=", 7) == 0)
+    {
+      matched_value = field_start + 7;
+      matched_value_len = (size_t)(value_end - matched_value);
+    }
+
+    field = field_end ? field_end + 1 : NULL;
+  }
+
+  if(!matched_value)
+    return 0;
+
+  *value = matched_value;
+  *value_len = matched_value_len;
+  return 1;
+}
+
 static duk_ret_t session_start(duk_context *ctx)
 {
   CosaPhpExtLog("%s: entered\n", __PRETTY_FUNCTION__);
   const char* cookie;
-  const char* sesid_end;
   size_t sesid_len;
   char parsed_sesid[SESSION_ID_LENGTH + 1];
   /* if session already created then do nothing */
@@ -194,18 +230,10 @@ static duk_ret_t session_start(duk_context *ctx)
     CosaPhpExtLog("%s: cookie %s\n", __PRETTY_FUNCTION__, cookie);
     /*load session id from cookie*/
     const char* sesid = NULL;
-    const char* tmp = cookie;
-    while (tmp = strstr(tmp, "DUKSID="))
+    if(get_session_id_cookie(cookie, &sesid, &sesid_len))
     {
-      sesid= tmp;
-      tmp++;
-    }
-    CosaPhpExtLog("%s: sesid %s\n", __PRETTY_FUNCTION__, sesid);
-    if(sesid)
-    {
-      sesid += 7;
-      sesid_end = strchr(sesid, ';');
-      sesid_len = sesid_end ? (size_t)(sesid_end - sesid) : strlen(sesid);
+      CosaPhpExtLog("%s: sesid %.*s\n", __PRETTY_FUNCTION__,
+                    (int)sesid_len, sesid);
       if(sesid_len == SESSION_ID_LENGTH)
       {
         memcpy(parsed_sesid, sesid, SESSION_ID_LENGTH);

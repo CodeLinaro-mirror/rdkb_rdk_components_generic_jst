@@ -96,6 +96,13 @@ function _jst_session_cookie()
     $cookie += "; secure";
   return $cookie;
 }
+function _jst_expire_session_cookie()
+{
+  var $cookie = "Set-Cookie: DUKSID=; Max-Age=0; httponly";
+  if(ccsp_session.isSecure())
+    $cookie += "; secure";
+  return $cookie;
+}
 function session_start()
 {
   if($_jst_session)
@@ -184,6 +191,7 @@ function session_status()
 }
 function session_destroy()
 {
+  header(_jst_expire_session_cookie());
   delete $_jst_session;
   $_jst_session = null;
   delete $_SESSION;

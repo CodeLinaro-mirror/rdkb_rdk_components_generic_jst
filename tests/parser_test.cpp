@@ -483,7 +483,7 @@ TEST(general, session_start_accepts_existing_valid_cookie_id)
 {
   EnvVarGuard cookie_guard("HTTP_COOKIE");
   const std::string session_id = makeValidSessionId('A');
-  const std::string cookie = "DUKSID=" + session_id;
+  const std::string cookie = "theme=dark; DUKSID=" + session_id + "; lang=en";
   const std::string session_file = "/tmp/" + session_id;
 
   FILE* file = fopen(session_file.c_str(), "w");
@@ -519,6 +519,35 @@ TEST(general, session_start_accepts_existing_valid_cookie_id)
   duk_pop_2(ctx);
 
   duk_destroy_heap(ctx);
+}
+
+TEST(general, session_start_rejects_embedded_duksid_cookie_name)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  const std::string session_id = makeValidSessionId('G');
+  const std::string cookie = "OTHERDUKSID=" + session_id;
+  const std::string session_file = "/tmp/" + session_id;
+
+  FILE* file = fopen(session_file.c_str(), "w");
+  ASSERT_NE(file, nullptr);
+  fclose(file);
+  cookie_guard.set(cookie.c_str());
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+
+  duk_push_c_function(ctx, ccsp_session_module_open, 0);
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  duk_put_global_string(ctx, "ccsp_session");
+
+  duk_get_global_string(ctx, "ccsp_session");
+  duk_get_prop_string(ctx, -1, "start");
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  EXPECT_FALSE(duk_get_boolean(ctx, -1));
+  duk_pop_2(ctx);
+
+  duk_destroy_heap(ctx);
+  unlink(session_file.c_str());
 }
 
 TEST(general, session_start_rejects_invalid_cookie_ids)
@@ -781,6 +810,9 @@ TEST(general, session_prefix_unset_clears_persisted_data_and_rejects_inactive_se
                           std::istreambuf_iterator<char>()).empty());
 
   ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer.indexOf('Set-Cookie: DUKSID=; Max-Age=0; httponly') !== -1 && "
+      "_jst_header_buffer.indexOf('; secure') === -1"));
   EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_unset()"));
   duk_destroy_heap(ctx);
 }
@@ -816,6 +848,8 @@ TEST(general, session_prefix_cookie_secure_attribute_follows_request_scheme)
       "_jst_header_buffer.indexOf('; httponly') !== -1 && _jst_header_buffer.indexOf('; secure') !== -1"));
   EXPECT_TRUE(evaluateJavaScriptBoolean(ctx, "session_id().charAt(8) === '1'"));
   ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer.indexOf('Set-Cookie: DUKSID=; Max-Age=0; httponly; secure') !== -1"));
   duk_destroy_heap(ctx);
 }
 
