@@ -106,7 +106,14 @@ function _jst_expire_session_cookie()
 function session_start()
 {
   if($_jst_session)
-    return true;
+  {
+    if(ccsp_session.start())
+      return true;
+
+    $_jst_session = null;
+    $_SESSION = {};
+    return false;
+  }
   if($_val_input == 1) 
   {
     $_val_input = 0;
