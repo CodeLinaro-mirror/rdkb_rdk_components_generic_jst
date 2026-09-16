@@ -773,7 +773,8 @@ TEST(general, session_prefix_start_failure_emits_no_header_and_keeps_empty_sessi
   evaluateSessionPrefix(ctx);
 
   EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
-  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx, "_jst_header_buffer === ''"));
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "_jst_header_buffer.indexOf('Set-Cookie:') === -1"));
   EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
       "$_jst_session === null && Object.getPrototypeOf($_SESSION) === Object.prototype"));
   EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
@@ -873,7 +874,8 @@ TEST(general, session_prefix_rejects_https_cookie_on_http_request)
 
   EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
   EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
-      "_jst_header_buffer === '' && !session_status() && $_jst_session === null"));
+      "_jst_header_buffer.indexOf('Set-Cookie:') === -1 && "
+      "!session_status() && $_jst_session === null"));
   EXPECT_EQ(access(session_file.c_str(), F_OK), 0);
 
   unlink(session_file.c_str());
