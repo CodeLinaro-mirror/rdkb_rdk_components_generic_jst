@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
 #include <ctype.h>
@@ -289,8 +290,11 @@ static duk_ret_t session_create(duk_context *ctx)
   /*create a new one*/
   static const char PRINTABLE_HEX_CODES[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
   int i = 0, n = 0;
+  int fd;
   uint8_t bytes[SESSION_ID_BYTES_LENGTH];
   char* session_id = NULL;
+  char* new_session_identifier = NULL;
+  char filename[SESSION_FILE_MAX_PATH];
 
   session_id = (char*)malloc(SESSION_ID_BYTES_LENGTH+1);
   if(!session_id)
@@ -314,50 +318,46 @@ static duk_ret_t session_create(duk_context *ctx)
 
   session_id[0] = request_session_scheme();
 
-  if(session_identifier)
+  new_session_identifier = (char*)malloc(SESSION_ID_LENGTH+1);
+  if(!new_session_identifier)
   {
-    char filename[SESSION_FILE_MAX_PATH];
-    if(get_session_file_path(session_identifier, filename, sizeof(filename)))
-      unlink(filename);
-    free(session_identifier);
-    session_identifier = NULL;
-  }
-
-  session_identifier = (char*)malloc(SESSION_ID_LENGTH+1);
-  if(!session_identifier)
-  {
-    CosaPhpExtLog("Failed to allocate session_identifier!\n");
+    CosaPhpExtLog("Failed to allocate new_session_identifier!\n");
     free(session_id);
     RETURN_FALSE;
   }
-  memset(session_identifier, 0, SESSION_ID_LENGTH+1);
 
   session_id[SESSION_ID_BYTES_LENGTH] = '\0';
-  snprintf(session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
+  snprintf(new_session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
   free(session_id);
 
+  if(!get_session_file_path(new_session_identifier, filename, sizeof(filename)))
   {
-    char filename[SESSION_FILE_MAX_PATH];
-    int fd;
-
-    if(!get_session_file_path(session_identifier, filename, sizeof(filename)))
-    {
-      free(session_identifier);
-      session_identifier = NULL;
-      RETURN_FALSE;
-    }
-
-    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-    if(fd < 0)
-    {
-      CosaPhpExtLog("Failed to create session file %s: %s\n", filename, strerror(errno));
-      free(session_identifier);
-      session_identifier = NULL;
-      RETURN_FALSE;
-    }
-
-    close(fd);
+    free(new_session_identifier);
+    RETURN_FALSE;
   }
+
+  fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+  if(fd < 0)
+  {
+    CosaPhpExtLog("Failed to create session file %s: %s\n", filename, strerror(errno));
+    free(new_session_identifier);
+    RETURN_FALSE;
+  }
+  if(close(fd) != 0)
+  {
+    CosaPhpExtLog("Failed to close session file %s: %s\n", filename, strerror(errno));
+    unlink(filename);
+    free(new_session_identifier);
+    RETURN_FALSE;
+  }
+
+  if(session_identifier)
+  {
+    if(get_session_file_path(session_identifier, filename, sizeof(filename)))
+      unlink(filename);
+    free(session_identifier);
+  }
+  session_identifier = new_session_identifier;
 
   RETURN_TRUE;
   return 1;

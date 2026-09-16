@@ -422,6 +422,16 @@ TEST(general, session_create_destroy_cycle_and_id_format)
   EXPECT_NE(access(first_session_file, F_OK), 0);
 
   duk_get_global_string(ctx, "ccsp_session");
+  duk_get_prop_string(ctx, -1, "getId");
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  const char* second_id = duk_get_string(ctx, -1);
+  ASSERT_NE(second_id, nullptr);
+  char second_session_file[128] = {0};
+  snprintf(second_session_file, sizeof(second_session_file), "/tmp/%s", second_id);
+  duk_pop_2(ctx);
+  EXPECT_EQ(access(second_session_file, F_OK), 0);
+
+  duk_get_global_string(ctx, "ccsp_session");
   duk_get_prop_string(ctx, -1, "destroy");
   ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
   EXPECT_TRUE(duk_get_boolean(ctx, -1));
@@ -845,6 +855,30 @@ TEST(general, session_prefix_old_proxy_does_not_write_replacement_session)
   duk_destroy_heap(ctx);
 }
 
+TEST(general, session_prefix_unset_does_not_recreate_deleted_session_file)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  cookie_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "session_create(); $_SESSION.persisted = 'value'; true"));
+  const std::string session_id = evaluateJavaScriptString(ctx, "session_id()");
+  ASSERT_FALSE(session_id.empty());
+  const std::string session_file = "/tmp/" + session_id;
+  ASSERT_EQ(unlink(session_file.c_str()), 0);
+
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_unset()"));
+  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_status()"));
+  EXPECT_NE(access(session_file.c_str(), F_OK), 0);
+
+  duk_destroy_heap(ctx);
+}
+
 TEST(general, session_prefix_cookie_secure_attribute_follows_request_scheme)
 {
   EnvVarGuard https_guard("HTTPS");
@@ -932,7 +966,6 @@ TEST(general, session_prefix_stale_proxy_does_not_recreate_deleted_session_file)
 
   ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_start()"));
   ASSERT_EQ(unlink(session_file.c_str()), 0);
-  EXPECT_FALSE(evaluateJavaScriptBoolean(ctx, "session_start()"));
   EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
       "$_SESSION.added = 'new'; delete $_SESSION.persisted; !session_status()"));
   EXPECT_NE(access(session_file.c_str(), F_OK), 0);

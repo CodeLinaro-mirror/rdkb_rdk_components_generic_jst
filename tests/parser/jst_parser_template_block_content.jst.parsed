@@ -103,6 +103,18 @@ function _jst_expire_session_cookie()
     $cookie += "; secure";
   return $cookie;
 }
+function _jst_session_is_current($session_id)
+{
+  if(!ccsp_session.getStatus() || ccsp_session.getId() !== $session_id)
+    return false;
+
+  if(ccsp_session.start() && ccsp_session.getId() === $session_id)
+    return true;
+
+  $_jst_session = null;
+  $_SESSION = {};
+  return false;
+}
 function _jst_session_proxy($session)
 {
   var $session_id = ccsp_session.getId();
@@ -112,7 +124,7 @@ function _jst_session_proxy($session)
     },
     set: function(obj, prop, val){
       obj[prop] = val;
-      if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
+      if(_jst_session_is_current($session_id))
         ccsp_session.setData(obj);
       return true;
     },
@@ -120,7 +132,7 @@ function _jst_session_proxy($session)
       if(prop in obj)
       {
         delete obj[prop];
-        if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
+        if(_jst_session_is_current($session_id))
           ccsp_session.setData(obj);
       }
       return true;
@@ -193,7 +205,8 @@ function session_destroy()
 }
 function session_unset()
 {
-  if(!$_jst_session || !ccsp_session.getStatus())
+  var $session_id = ccsp_session.getId();
+  if(!$_jst_session || !_jst_session_is_current($session_id))
     return false;
 
   for(var $key in $_jst_session)
@@ -285,6 +298,10 @@ function include($filepath)
 }
 
 /* begin application code */
+
+
+
+
 
 
 
