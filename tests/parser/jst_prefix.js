@@ -16,23 +16,30 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
-
 try
 {
 /* HEADERS: accumulate headers into a buffer
             to send to stdout in _jst_finish*/
-_jst_header_buffer = "Content-type: text/html";
+_jst_header_content_type_set = false;
+_jst_header_buffer = "";
 function header(str)
 {
-  if(str.toLowerCase().indexOf('location:') == 0)
+  lstr = str.toLowerCase();
+  if(lstr.indexOf('location:') == 0)
   {
     _jst_header_buffer = "HTTP/1.0 302 Ok\r\n";
     _jst_header_buffer += "Status: 302 Moved\r\n";
-    _jst_header_buffer += str;
+    _jst_header_buffer += str + "\r\n";
   }
   else
   {
-    _jst_header_buffer += "\n" + str;
+    if(lstr.indexOf('content-type:') == 0)
+    {
+      _jst_header_content_type_set = true;
+      if(lstr.indexOf('application/json') != -1)
+        _jst_header_buffer += "Content-Type: text/html\r\n";
+    }
+    _jst_header_buffer += str + "\r\n";
   }
 }
 
@@ -41,6 +48,7 @@ function header(str)
 _jst_echo_buffer = "";
 function echo(str)
 {
+   str = (typeof(str)!="undefined") ? str : "";
   _jst_echo_buffer += str;
 }
 
@@ -48,9 +56,9 @@ function echo(str)
            and it will send the headers and content to stdout */
 function _jst_finish()
 {
-  print(_jst_header_buffer);
-  print("\r\n\r\n\n");
-  print(_jst_echo_buffer);
+  if(!_jst_header_content_type_set)
+    print("Content-type: text/html\r");
+  print(_jst_header_buffer + "\r\n" + _jst_echo_buffer);
 }
 
 /* EXIT: there is no way to simply quit in the middle of a script, so
@@ -80,26 +88,31 @@ var $_SERVER = new Proxy({}, {
 /* SESSION: session data set by web app, saved to disk, and referenced by session id stored in cookie */
 var $_SESSION = {};
 var $_jst_session = null;
-function session_start()
+var $_val_input = {};
+function _jst_session_cookie()
 {
-  if($_jst_session)
-    return true;
-  if(!ccsp_session.start())
-  {
-    /* A stale cookie must not create a proxy backed by an inactive session. */
-    $_jst_session = null;
-    $_SESSION = {};
-    return false;
-  }
-  header("Set-Cookie: DUKSID=" + ccsp_session.getId() + ";");
-  $_jst_session = ccsp_session.getData();
-  $_SESSION = new Proxy($_jst_session, {
+  var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; httponly";
+  if(ccsp_session.isSecure())
+    $cookie += "; secure";
+  return $cookie;
+}
+function _jst_expire_session_cookie()
+{
+  var $cookie = "Set-Cookie: DUKSID=; Max-Age=0; httponly";
+  if(ccsp_session.isSecure())
+    $cookie += "; secure";
+  return $cookie;
+}
+function _jst_session_proxy($session)
+{
+  var $session_id = ccsp_session.getId();
+  return new Proxy($session, {
     get: function(obj, prop) {
       return obj[prop];
     },
     set: function(obj, prop, val){
       obj[prop] = val;
-      if(ccsp_session.getStatus())
+      if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
         ccsp_session.setData(obj);
       return true;
     },
@@ -107,12 +120,58 @@ function session_start()
       if(prop in obj)
       {
         delete obj[prop];
-        if(ccsp_session.getStatus())
+        if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
           ccsp_session.setData(obj);
       }
       return true;
     }
   });
+}
+function session_start()
+{
+  if($_jst_session)
+  {
+    if(ccsp_session.start())
+      return true;
+
+    $_jst_session = null;
+    $_SESSION = {};
+    return false;
+  }
+  if($_val_input == 1)
+  {
+    $_val_input = 0;
+    return false;
+  }
+  if(!ccsp_session.start())
+  {
+    /* A stale cookie must not create a proxy backed by an inactive session. */
+    $_jst_session = null;
+    $_SESSION = {};
+    return false;
+  }
+  if(ccsp_session.getStatus())
+  {
+    header(_jst_session_cookie());
+  }
+  $_jst_session = ccsp_session.getData();
+  if($_jst_session === null || typeof($_jst_session) !== 'object')
+    $_jst_session = {};
+  $_SESSION = _jst_session_proxy($_jst_session);
+  return true;
+}
+function session_create(){
+  if(!ccsp_session.create())
+  {
+    $_jst_session = null;
+    $_SESSION = {};
+    return false;
+  }
+  header(_jst_session_cookie());
+  $_jst_session = ccsp_session.getData();
+  if($_jst_session === null || typeof($_jst_session) !== 'object')
+    $_jst_session = {};
+  $_SESSION = _jst_session_proxy($_jst_session);
   return true;
 }
 function session_id()
@@ -125,6 +184,7 @@ function session_status()
 }
 function session_destroy()
 {
+  header(_jst_expire_session_cookie());
   delete $_jst_session;
   $_jst_session = null;
   delete $_SESSION;
@@ -162,7 +222,41 @@ if(postData)
       $_POST[postValue[0]] = decodeURIComponent(value);
     }
     else
+    {
       print("unexpected post data");
+      $_val_input = 1;
+    }
+  }
+}
+
+/* FILES: multipart/form-data files via stdin */
+$_FILES={};
+var filesData = ccsp_post.getFiles();
+if(filesData)
+{
+  var fileList = filesData.split(';');
+  for(var i = 0; i < fileList.length; ++i)
+  {
+    var fileData = fileList[i].split('&');
+    var fileId = null;
+    for(var j = 0; j < fileData.length; ++j)
+    {
+      var fileValue = fileData[j].split('=');
+      if(fileValue.length == 2)
+      {
+        if(!fileId)
+        {
+          fileId = decodeURIComponent(fileValue[1]);
+          $_FILES[fileId]={};
+        }
+        else
+        {
+          $_FILES[fileId][decodeURIComponent(fileValue[0])]=decodeURIComponent(fileValue[1]);
+        }
+      }
+      else
+        print("unexpected file data");
+    }
   }
 }
 

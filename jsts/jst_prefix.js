@@ -138,7 +138,7 @@ function session_start()
     $_SESSION = {};
     return false;
   }
-  if($_val_input == 1) 
+  if($_val_input == 1)
   {
     $_val_input = 0;
     return false;
