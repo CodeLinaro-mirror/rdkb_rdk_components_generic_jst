@@ -103,6 +103,30 @@ function _jst_expire_session_cookie()
     $cookie += "; secure";
   return $cookie;
 }
+function _jst_session_proxy($session)
+{
+  var $session_id = ccsp_session.getId();
+  return new Proxy($session, {
+    get: function(obj, prop) {
+      return obj[prop];
+    },
+    set: function(obj, prop, val){
+      obj[prop] = val;
+      if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
+        ccsp_session.setData(obj);
+      return true;
+    },
+    deleteProperty(obj, prop) {
+      if(prop in obj)
+      {
+        delete obj[prop];
+        if(ccsp_session.getStatus() && ccsp_session.getId() === $session_id)
+          ccsp_session.setData(obj);
+      }
+      return true;
+    }
+  });
+}
 function session_start()
 {
   if($_jst_session)
@@ -133,26 +157,7 @@ function session_start()
   $_jst_session = ccsp_session.getData();
   if($_jst_session === null || typeof($_jst_session) !== 'object')
     $_jst_session = {};
-  $_SESSION = new Proxy($_jst_session, {
-    get: function(obj, prop) {
-      return obj[prop];
-    },
-    set: function(obj, prop, val){
-      obj[prop] = val;
-      if(ccsp_session.getStatus())
-        ccsp_session.setData(obj);
-      return true;
-    },
-    deleteProperty(obj, prop) {
-      if(prop in obj)
-      {
-        delete obj[prop];
-        if(ccsp_session.getStatus())
-          ccsp_session.setData(obj);
-      }
-      return true;
-    }
-  });
+  $_SESSION = _jst_session_proxy($_jst_session);
   return true;
 }
 function session_create(){
@@ -166,26 +171,7 @@ function session_create(){
   $_jst_session = ccsp_session.getData();
   if($_jst_session === null || typeof($_jst_session) !== 'object')
     $_jst_session = {};
-  $_SESSION = new Proxy($_jst_session, {
-    get: function(obj, prop) {
-      return obj[prop];
-    },
-    set: function(obj, prop, val){
-      obj[prop] = val;
-      if(ccsp_session.getStatus())
-        ccsp_session.setData(obj);
-      return true;
-    },
-    deleteProperty(obj, prop) {
-      if(prop in obj)
-      {
-        delete obj[prop];
-        if(ccsp_session.getStatus())
-          ccsp_session.setData(obj);
-      }
-      return true;
-    }
-  });
+  $_SESSION = _jst_session_proxy($_jst_session);
   return true;
 }
 function session_id()

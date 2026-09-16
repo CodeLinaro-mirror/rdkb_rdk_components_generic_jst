@@ -818,6 +818,27 @@ TEST(general, session_prefix_unset_clears_persisted_data_and_rejects_inactive_se
   duk_destroy_heap(ctx);
 }
 
+TEST(general, session_prefix_old_proxy_does_not_write_replacement_session)
+{
+  EnvVarGuard cookie_guard("HTTP_COOKIE");
+  cookie_guard.set(nullptr);
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  installSessionPrefixDependencies(ctx);
+  evaluateSessionPrefix(ctx);
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "ccsp_session.isSecure = function() { return false; }; true"));
+
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "session_create(); var oldSession = $_SESSION; session_create(); "
+      "oldSession.stale = 'value'; $_SESSION.current = 'value'; "
+      "ccsp_session.getData().stale === undefined && "
+      "ccsp_session.getData().current === 'value'"));
+  ASSERT_TRUE(evaluateJavaScriptBoolean(ctx, "session_destroy()"));
+  duk_destroy_heap(ctx);
+}
+
 TEST(general, session_prefix_cookie_secure_attribute_follows_request_scheme)
 {
   EnvVarGuard https_guard("HTTPS");
