@@ -402,10 +402,13 @@ TEST(general, session_create_destroy_cycle_and_id_format)
   snprintf(first_session_file, sizeof(first_session_file), "/tmp/%s", first_id);
   duk_pop_2(ctx);
 
-  FILE* stale = fopen(first_session_file, "w");
-  ASSERT_NE(stale, nullptr);
-  fclose(stale);
   ASSERT_EQ(access(first_session_file, F_OK), 0);
+
+  duk_get_global_string(ctx, "ccsp_session");
+  duk_get_prop_string(ctx, -1, "start");
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  EXPECT_TRUE(duk_get_boolean(ctx, -1));
+  duk_pop_2(ctx);
 
   duk_get_global_string(ctx, "ccsp_session");
   duk_get_prop_string(ctx, -1, "create");

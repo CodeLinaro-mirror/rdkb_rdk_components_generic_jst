@@ -335,6 +335,29 @@ static duk_ret_t session_create(duk_context *ctx)
   snprintf(session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
   free(session_id);
 
+  {
+    char filename[SESSION_FILE_MAX_PATH];
+    FILE* file;
+
+    if(!get_session_file_path(session_identifier, filename, sizeof(filename)))
+    {
+      free(session_identifier);
+      session_identifier = NULL;
+      RETURN_FALSE;
+    }
+
+    file = fopen(filename, "w");
+    if(!file)
+    {
+      CosaPhpExtLog("Failed to create session file %s: %s\n", filename, strerror(errno));
+      free(session_identifier);
+      session_identifier = NULL;
+      RETURN_FALSE;
+    }
+
+    fclose(file);
+  }
+
   RETURN_TRUE;
   return 1;
 }
