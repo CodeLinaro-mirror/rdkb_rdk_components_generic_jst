@@ -154,6 +154,79 @@ static string getFieldValue(const string& input, const string& key)
   return input.substr(start, end - start);
 }
 
+static duk_ret_t test_getenv(duk_context* ctx)
+{
+  const char* name = duk_require_string(ctx, 0);
+  const char* value = getenv(name);
+
+  if(value)
+    duk_push_string(ctx, value);
+  else
+    duk_push_false(ctx);
+
+  return 1;
+}
+
+static duk_ret_t test_post_data(duk_context* ctx)
+{
+  duk_get_global_string(ctx, "__test_post_data");
+  return 1;
+}
+
+static duk_ret_t test_files_data(duk_context* ctx)
+{
+  duk_get_global_string(ctx, "__test_files_data");
+  return 1;
+}
+
+static void evaluatePrefixWithRequestData(duk_context* ctx,
+                                          const char* post_data,
+                                          const char* files_data)
+{
+  duk_push_c_function(ctx, ccsp_session_module_open, 0);
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  duk_put_global_string(ctx, "ccsp_session");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_getenv, 1);
+  duk_put_prop_string(ctx, -2, "getenv");
+  duk_put_global_string(ctx, "ccsp");
+
+  duk_push_string(ctx, post_data);
+  duk_put_global_string(ctx, "__test_post_data");
+  duk_push_string(ctx, files_data);
+  duk_put_global_string(ctx, "__test_files_data");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_post_data, 0);
+  duk_put_prop_string(ctx, -2, "getPost");
+  duk_push_c_function(ctx, test_files_data, 0);
+  duk_put_prop_string(ctx, -2, "getFiles");
+  duk_put_global_string(ctx, "ccsp_post");
+
+  std::ifstream prefix_file(JST_PREFIX_PATH);
+  ASSERT_TRUE(prefix_file.is_open());
+  std::string prefix((std::istreambuf_iterator<char>(prefix_file)),
+                     std::istreambuf_iterator<char>());
+  prefix += "\n} catch (e) { throw e; }\n";
+  ASSERT_EQ(duk_peval_lstring(ctx, prefix.c_str(), prefix.length()), DUK_EXEC_SUCCESS)
+      << duk_safe_to_string(ctx, -1);
+  duk_pop(ctx);
+}
+
+static bool evaluateJavaScriptBoolean(duk_context* ctx, const char* source)
+{
+  if(duk_peval_string(ctx, source) != DUK_EXEC_SUCCESS)
+  {
+    duk_pop(ctx);
+    return false;
+  }
+
+  const bool result = duk_get_boolean(ctx, -1);
+  duk_pop(ctx);
+  return result;
+}
+
 int recurseDirectory(const string& path, vector<string>& files, const string& match)
 {
   DIR *dir;
@@ -217,6 +290,23 @@ TEST(general, parser) {
       EXPECT_EQ(strcmp(inBuffer, soutput.c_str()), 0);
     }
   }
+}
+
+TEST(general, prefix_preserves_equals_signs_in_request_values)
+{
+  EnvVarGuard query_string_guard("QUERY_STRING");
+  query_string_guard.set("mac_ssid==2");
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  evaluatePrefixWithRequestData(ctx, "token=abc%3D%3D",
+      "id=file1&name=config%3Dbackup&type=application%2Foctet-stream");
+
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_GET.mac_ssid === '=2' && $_POST.token === 'abc==' && "
+      "$_FILES.file1.name === 'config=backup'"));
+
+  duk_destroy_heap(ctx);
 }
 
 TEST(general, session_create_multiple_calls_succeed)
