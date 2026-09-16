@@ -174,9 +174,6 @@ function session_start()
 }
 function session_create(){
   if(!ccsp_session.create())
-  {
-    $_jst_session = null;
-    $_SESSION = {};
     return false;
   }
   header(_jst_session_cookie());
