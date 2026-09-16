@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include "jst_internal.h"
 #include <sys/sysinfo.h>
 #include <stdint.h>
@@ -337,7 +338,7 @@ static duk_ret_t session_create(duk_context *ctx)
 
   {
     char filename[SESSION_FILE_MAX_PATH];
-    FILE* file;
+    int fd;
 
     if(!get_session_file_path(session_identifier, filename, sizeof(filename)))
     {
@@ -346,8 +347,8 @@ static duk_ret_t session_create(duk_context *ctx)
       RETURN_FALSE;
     }
 
-    file = fopen(filename, "w");
-    if(!file)
+    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if(fd < 0)
     {
       CosaPhpExtLog("Failed to create session file %s: %s\n", filename, strerror(errno));
       free(session_identifier);
@@ -355,7 +356,7 @@ static duk_ret_t session_create(duk_context *ctx)
       RETURN_FALSE;
     }
 
-    fclose(file);
+    close(fd);
   }
 
   RETURN_TRUE;

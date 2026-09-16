@@ -403,6 +403,9 @@ TEST(general, session_create_destroy_cycle_and_id_format)
   duk_pop_2(ctx);
 
   ASSERT_EQ(access(first_session_file, F_OK), 0);
+  struct stat first_session_stat;
+  ASSERT_EQ(stat(first_session_file, &first_session_stat), 0);
+  EXPECT_EQ(first_session_stat.st_mode & 0777, S_IRUSR | S_IWUSR);
 
   duk_get_global_string(ctx, "ccsp_session");
   duk_get_prop_string(ctx, -1, "start");
@@ -882,6 +885,8 @@ TEST(general, session_prefix_rejects_https_cookie_on_http_request)
 {
   EnvVarGuard cookie_guard("HTTP_COOKIE");
   EnvVarGuard https_guard("HTTPS");
+  EnvVarGuard request_scheme_guard("REQUEST_SCHEME");
+  EnvVarGuard ssl_protocol_guard("SSL_PROTOCOL");
   const std::string session_id = std::string("jst_sess1") + std::string(31, 'E');
   const std::string session_file = "/tmp/" + session_id;
 
@@ -890,6 +895,8 @@ TEST(general, session_prefix_rejects_https_cookie_on_http_request)
   fclose(file);
   cookie_guard.set(("DUKSID=" + session_id).c_str());
   https_guard.set(nullptr);
+  request_scheme_guard.set(nullptr);
+  ssl_protocol_guard.set(nullptr);
 
   duk_context* ctx = duk_create_heap_default();
   ASSERT_NE(ctx, nullptr);
