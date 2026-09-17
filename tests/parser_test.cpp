@@ -173,6 +173,20 @@ static duk_ret_t test_no_post_data(duk_context* ctx)
   return 1;
 }
 
+static duk_ret_t test_post_data(duk_context* ctx)
+{
+  duk_get_global_string(ctx, "__test_post_data");
+  return 1;
+}
+
+static duk_ret_t test_files_data(duk_context* ctx)
+{
+  duk_get_global_string(ctx, "__test_files_data");
+  return 1;
+}
+
+static void evaluateSessionPrefix(duk_context* ctx);
+
 static void installSessionPrefixDependencies(duk_context* ctx)
 {
   duk_push_c_function(ctx, ccsp_session_module_open, 0);
@@ -190,6 +204,34 @@ static void installSessionPrefixDependencies(duk_context* ctx)
   duk_push_c_function(ctx, test_no_post_data, 0);
   duk_put_prop_string(ctx, -2, "getFiles");
   duk_put_global_string(ctx, "ccsp_post");
+}
+
+static void evaluatePrefixWithRequestData(duk_context* ctx,
+                                          const char* post_data,
+                                          const char* files_data)
+{
+  duk_push_c_function(ctx, ccsp_session_module_open, 0);
+  ASSERT_EQ(duk_pcall(ctx, 0), DUK_EXEC_SUCCESS);
+  duk_put_global_string(ctx, "ccsp_session");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_getenv, 1);
+  duk_put_prop_string(ctx, -2, "getenv");
+  duk_put_global_string(ctx, "ccsp");
+
+  duk_push_string(ctx, post_data);
+  duk_put_global_string(ctx, "__test_post_data");
+  duk_push_string(ctx, files_data);
+  duk_put_global_string(ctx, "__test_files_data");
+
+  duk_push_object(ctx);
+  duk_push_c_function(ctx, test_post_data, 0);
+  duk_put_prop_string(ctx, -2, "getPost");
+  duk_push_c_function(ctx, test_files_data, 0);
+  duk_put_prop_string(ctx, -2, "getFiles");
+  duk_put_global_string(ctx, "ccsp_post");
+
+  evaluateSessionPrefix(ctx);
 }
 
 static void evaluateSessionPrefix(duk_context* ctx)
@@ -295,6 +337,23 @@ TEST(general, parser) {
       EXPECT_EQ(strcmp(inBuffer, soutput.c_str()), 0);
     }
   }
+}
+
+TEST(general, prefix_preserves_equals_signs_in_request_values)
+{
+  EnvVarGuard query_string_guard("QUERY_STRING");
+  query_string_guard.set("mac_ssid==2");
+
+  duk_context* ctx = duk_create_heap_default();
+  ASSERT_NE(ctx, nullptr);
+  evaluatePrefixWithRequestData(ctx, "token=abc%3D%3D",
+      "id=file1&name=config%3Dbackup&type=application%2Foctet-stream");
+
+  EXPECT_TRUE(evaluateJavaScriptBoolean(ctx,
+      "$_GET.mac_ssid === '=2' && $_POST.token === 'abc==' && "
+      "$_FILES.file1.name === 'config=backup'"));
+
+  duk_destroy_heap(ctx);
 }
 
 TEST(general, session_create_multiple_calls_succeed)
